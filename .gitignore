@@ -11,6 +11,7 @@ obj/
 dpc3_traces/
 traces/
 cvp1_traces/
+traces
 
 # Run directory
 runs/
