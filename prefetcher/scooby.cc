@@ -304,7 +304,7 @@ void Scooby::invoke_prefetcher(uint64_t pc, uint64_t address, uint8_t cache_hit,
 	MYLOG("%s %lx pc %lx page %lx off %u", GetAccessType(type), address, pc, page, offset);
 
 	/* compute reward on demand */
-	reward(address);
+	Scooby_PTEntry *last_state = reward(address);
 
 	/* record the access: just to gain some insights from the workload
 	 * defined in scooby_helper.h(cc) */
@@ -334,8 +334,27 @@ void Scooby::invoke_prefetcher(uint64_t pc, uint64_t address, uint8_t cache_hit,
 	state->acc_level = acc_level;
 
 	uint32_t count = pref_addr.size();
-	predict(address, page, offset, state, pref_addr);
+	uint32_t action_index = predict(address, page, offset, state, pref_addr);
 	stats.pref_issue.scooby += (pref_addr.size() - count);
+
+	if (last_state != NULL)
+	{
+		assert(last_state->has_reward);
+
+		/* train */
+		MYLOG("===SARSA=== S1: %s A1: %u R1: %d S2: %s A2: %u", last_state->state->to_string().c_str(), last_state->action_index,
+																last_state->reward,
+																curr_evicted->state->to_string().c_str(), action_index);
+		if(knob::scooby_enable_featurewise_engine)
+		{
+			brain_featurewise->learn(last_state->state, last_state->action_index, last_state->reward, state, action_index,
+									last_state->consensus_vec, last_state->reward_type);
+		}
+		else
+		{
+			brain->learn(last_state->state->value(), last_state->action_index, last_state->reward, state->value(), action_index);
+		}
+	}
 }
 
 void Scooby::update_global_state(uint64_t pc, uint64_t page, uint32_t offset, uint64_t address)
@@ -489,7 +508,8 @@ uint32_t Scooby::predict(uint64_t base_address, uint64_t page, uint32_t offset, 
 	stats.predict.predicted += pref_addr.size();
 	MYLOG("end@%lx", base_address);
 
-	return pref_addr.size();
+	// return pref_addr.size();
+	return action_index;
 }
 
 /* Returns true if the address is not already present in prefetch_tracker
@@ -616,7 +636,7 @@ uint32_t Scooby::get_dyn_pref_degree(float max_to_avg_q_ratio, uint64_t page, in
 /* TODO: what if multiple prefetch request generated the same address?
  * Currently, it just rewards the oldest prefetch request to the address
  * Should we reward all? */
-void Scooby::reward(uint64_t address)
+Scooby_PTEntry *Scooby::reward(uint64_t address)
 {
 	MYLOG("addr @ %lx", address);
 
@@ -627,7 +647,7 @@ void Scooby::reward(uint64_t address)
 	{
 		MYLOG("PT miss");
 		stats.reward.demand.pt_not_found++;
-		return;
+		return NULL;
 	}
 	else
 	{
@@ -646,7 +666,7 @@ void Scooby::reward(uint64_t address)
 		{
 			MYLOG("entry already has reward: %d", ptentry->reward);
 			stats.reward.demand.has_reward++;
-			return;
+			return NULL;
 		}
 
 		if(ptentry->is_filled) /* timely */
@@ -660,7 +680,9 @@ void Scooby::reward(uint64_t address)
 			MYLOG("assigned reward correct_untimely(%d)", ptentry->reward);
 		}
 		ptentry->has_reward = true;
+		return ptentry;
 	}
+	return NULL;
 }
 
 /* This reward function is called during eviction from prefetch_tracker */
@@ -764,21 +786,21 @@ void Scooby::train(Scooby_PTEntry *curr_evicted, Scooby_PTEntry *last_evicted)
 	{
 		stats.train.compute_reward++;
 		reward(last_evicted);
-	}
-	assert(last_evicted->has_reward);
+		assert(last_evicted->has_reward);
 
-	/* train */
-	MYLOG("===SARSA=== S1: %s A1: %u R1: %d S2: %s A2: %u", last_evicted->state->to_string().c_str(), last_evicted->action_index,
-															last_evicted->reward,
-															curr_evicted->state->to_string().c_str(), curr_evicted->action_index);
-	if(knob::scooby_enable_featurewise_engine)
-	{
-		brain_featurewise->learn(last_evicted->state, last_evicted->action_index, last_evicted->reward, curr_evicted->state, curr_evicted->action_index,
-								last_evicted->consensus_vec, last_evicted->reward_type);
-	}
-	else
-	{
-		brain->learn(last_evicted->state->value(), last_evicted->action_index, last_evicted->reward, curr_evicted->state->value(), curr_evicted->action_index);
+		/* train */
+		MYLOG("===SARSA=== S1: %s A1: %u R1: %d S2: %s A2: %u", last_evicted->state->to_string().c_str(), last_evicted->action_index,
+																last_evicted->reward,
+																curr_evicted->state->to_string().c_str(), curr_evicted->action_index);
+		if(knob::scooby_enable_featurewise_engine)
+		{
+			brain_featurewise->learn(last_evicted->state, last_evicted->action_index, last_evicted->reward, curr_evicted->state, curr_evicted->action_index,
+									last_evicted->consensus_vec, last_evicted->reward_type);
+		}
+		else
+		{
+			brain->learn(last_evicted->state->value(), last_evicted->action_index, last_evicted->reward, curr_evicted->state->value(), curr_evicted->action_index);
+		}
 	}
 	MYLOG("train done");
 }

@@ -163,7 +163,7 @@ private:
 	Scooby_STEntry* update_local_state(uint64_t pc, uint64_t page, uint32_t offset, uint64_t address);
 	uint32_t predict(uint64_t address, uint64_t page, uint32_t offset, State *state, vector<uint64_t> &pref_addr);
 	bool track(uint64_t address, State *state, uint32_t action_index, Scooby_PTEntry **tracker);
-	void reward(uint64_t address);
+	Scooby_PTEntry *reward(uint64_t address);
 	void reward(Scooby_PTEntry *ptentry);
 	void assign_reward(Scooby_PTEntry *ptentry, RewardType type);
 	int32_t compute_reward(Scooby_PTEntry *ptentry, RewardType type);
